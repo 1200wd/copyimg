@@ -1,0 +1,33 @@
+#! /bin/bash
+
+set -e
+
+vg=images
+host=$1
+part=$2
+date=`date +%F`
+snapname="backup-$part-$date"
+ip=$(/sbin/ip -o -4 addr list br0 | awk '{print $4}' | cut -d/ -f1)
+
+echo Copying $part from $host
+
+size=`ssh root@$host lvs /dev/$vg/$part -o LV_SIZE --noheadings --units b`
+echo Size $size
+
+echo Removing any previous backups
+lvremove -f /dev/$vg/backup-$part-????-??-?? || true
+
+echo Creating local lvm partition to store img...
+lvcreate -L $size -n $snapname $vg
+
+echo Creating remote snapshot...
+ssh root@$host lvcreate -L 2G -s -n $snapname /dev/$vg/$part
+
+echo Starting copy...
+nc -d -l 1234 | dd bs=1M of=/dev/$vg/$snapname &
+ssh root@$host "dd if=/dev/$vg/$snapname bs=1M | nc $ip 1234"
+
+echo Removing remote snapshot
+ssh root@$host lvremove -f /dev/$vg/$snapname
+
+echo Done!
